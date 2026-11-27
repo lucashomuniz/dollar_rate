@@ -63,6 +63,8 @@ nav button.on{background:#48484a}
 const SALARY_USD = 2508.34;          // valor recebido em USD
 const HIGLOBE_SPREAD = 0.0020;       // 0,20% (higlobe.com/pricing), sem IOF e sem tarifas
 const API = 'https://economia.awesomeapi.com.br/json';
+const LIVE = 'https://scanner.tradingview.com/forex/scan';
+const REFRESH_MS = 15000;
 const DAYS = {'1W':7,'1M':30,'3M':91,'6M':182,'1Y':365,'2Y':730};
 
 const $ = id => document.getElementById(id);
@@ -81,10 +83,19 @@ let range = '3M', last = null, daily = null, intraday = null, pts = [], hover = 
 
 async function get(url){ const r = await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error(r.status); return r.json(); }
 
+// Live quote: ICE Data (FX_IDC:USDBRL) via TradingView scanner, ~real time. Fallback: AwesomeAPI (delayed).
 async function loadLast(){
-  const j = await get(`${API}/last/USD-BRL`);
-  const q = j.USDBRL;
-  last = {bid:+q.bid, pct:+q.pctChange, ts:+q.timestamp*1000};
+  try {
+    const r = await fetch(LIVE, {method:'POST', cache:'no-store', body: JSON.stringify({symbols:{tickers:['FX_IDC:USDBRL']}, columns:['close','change','update_time']})});
+    if (!r.ok) throw new Error(r.status);
+    const d = (await r.json()).data[0].d;
+    if (!(d[0] > 0)) throw new Error('empty');
+    last = {bid:+d[0], pct:+d[1], ts:+d[2]*1000};
+  } catch (e) {
+    const q = (await get(`${API}/last/USD-BRL`)).USDBRL;
+    last = {bid:+q.bid, pct:+q.pctChange, ts:+q.timestamp*1000};
+  }
+  if (intraday && (!intraday.length || last.ts > intraday[intraday.length-1].t)) intraday.push({t:last.ts, v:last.bid});
 }
 async function loadDaily(){
   if (daily) return;
@@ -99,13 +110,14 @@ async function loadIntraday(){
   const j = await get(`${API}/USD-BRL/1000`);
   const cut = Date.now() - 24*3600e3;
   intraday = j.map(x=>({t:+x.timestamp*1000, v:+x.bid})).filter(p=>p.t>=cut).sort((a,b)=>a.t-b.t);
+  if (last && (!intraday.length || last.ts > intraday[intraday.length-1].t)) intraday.push({t:last.ts, v:last.bid});
 }
 
 function series(){
   if (range === '1D') return intraday || [];
   const cut = Date.now() - DAYS[range]*864e5;
   const s = (daily||[]).filter(p=>p.t>=cut);
-  if (last && s.length && last.ts > s[s.length-1].t) s.push({t:last.ts, v:last.bid});
+  if (last && s.length) { const k=t=>brt(t,{year:'numeric',month:'2-digit',day:'2-digit'}); if (k(s[s.length-1].t)===k(last.ts)) s[s.length-1]={t:last.ts,v:last.bid}; else if (last.ts > s[s.length-1].t) s.push({t:last.ts, v:last.bid}); }
   return s;
 }
 
@@ -119,7 +131,7 @@ function renderHeader(){
   document.documentElement.style.setProperty('--c', up ? 'var(--up)' : 'var(--down)');
   $('chg').textContent = (up?'↑ ':'↓ ') + fmt(Math.abs(pct),2) + '%';
   $('chgLbl').textContent = range === '1D' ? 'today' : 'in ' + range;
-  $('time').textContent = brt(last.ts,{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) + ' BRT';
+  $('time').textContent = brt(last.ts,{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}) + ' BRT';
   const vet = last.bid * (1 - HIGLOBE_SPREAD);
   $('hg').textContent = 'R$ ' + fmt(vet);
   salBrl = 'R$ ' + fmt(Math.floor(SALARY_USD * vet), 0); renderSalary();
@@ -176,7 +188,8 @@ async function refresh(full=true){
   }catch(err){ $('msg').style.display='flex'; $('msg').textContent='No connection to the rate feed. Retrying…'; }
 }
 refresh();
-setInterval(()=>{ if(range==='1D') intraday=null; refresh(); }, 60000);
+setInterval(()=>refresh(false), REFRESH_MS);
+setInterval(()=>{ intraday=null; }, 300000);
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden){ daily=null; intraday=null; refresh(); } });
 </script>
 </body>
