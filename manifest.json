@@ -1,0 +1,9 @@
+{
+  "name": "Dólar → Real",
+  "short_name": "USD/BRL",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0b0b0d",
+  "theme_color": "#0b0b0d",
+  "icons": [{ "src": "icon.png", "sizes": "1024x1024", "type": "image/png" }]
+}
